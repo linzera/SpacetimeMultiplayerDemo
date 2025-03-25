@@ -1,7 +1,9 @@
-use spacetimedb::spacetimedb;
+use spacetimedb::{table, ScheduleAt};
+
+use crate::{despawn_npcs, move_npcs, spawn_npcs, terrain_generation::check_chunks_for_all_players};
 
 #[derive(Copy, Clone)]
-#[spacetimedb(table)]
+#[table(name = config, public)]
 pub struct Config {
     #[unique]
     // always 0 for now
@@ -29,7 +31,7 @@ pub struct Config {
 }
 
 #[derive(Copy, Clone)]
-#[spacetimedb(table)]
+#[table(name = server_globals, public)]
 pub struct ServerGlobals {
     #[unique]
     // always 0
@@ -39,9 +41,41 @@ pub struct ServerGlobals {
     pub entity_id_counter: u64,
 }
 
-#[spacetimedb(table)]
+#[table(name = player_chat_message, public)]
 pub struct PlayerChatMessage {
     pub player_id: u64,
     pub msg_time: u64,
     pub message: String,
+}
+
+#[table(name = check_chunks_for_all_players_timer, scheduled(check_chunks_for_all_players))]
+pub struct CheckChunkForAllPlayersTimer {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[table(name = spawn_npcs_timer, scheduled(spawn_npcs))]
+pub struct SpawnNpcsTimer {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[table(name = despawn_npcs_timer, scheduled(despawn_npcs))]
+pub struct DespawnNpcsTimer {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[table(name = move_npcs_timer, scheduled(move_npcs))]
+pub struct MoveNpcsTimer {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
 }

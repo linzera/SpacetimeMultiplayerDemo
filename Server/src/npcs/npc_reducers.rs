@@ -1,50 +1,72 @@
 use crate::{
-    components::{AnimationComponent, NpcComponent, TransformComponent},
+    components::{animation, npc, transform, AnimationComponent},
     math::{StdbQuaternion, StdbVector3},
 };
-use spacetimedb::{spacetimedb, Identity};
+use spacetimedb::{reducer, ReducerContext};
 
-#[spacetimedb(reducer)]
-pub fn move_npc(_identity: Identity, timestamp: u64, entity_id: u64, pos: StdbVector3, rot: StdbQuaternion, duration: u64) {
+#[reducer]
+pub fn move_npc(
+    ctx: &ReducerContext,
+    timestamp: u64,
+    entity_id: u64,
+    pos: StdbVector3,
+    rot: StdbQuaternion,
+    duration: u64,
+) {
     /*
     TODO: Uncomment when supported.
     if identity != 0 {
-        println!("Only the server should move NPCs (allowed for now)");
+        log::info!("Only the server should move NPCs (allowed for now)");
     }
     */
 
     // Next action timestamp
-    let mut npc = NpcComponent::filter_by_entity_id(&entity_id).expect("This npc doesn't exist.");
+    let mut npc = ctx
+        .db
+        .npc()
+        .entity_id()
+        .find(&entity_id)
+        .expect("This npc doesn't exist.");
     npc.next_action = timestamp + duration;
-    NpcComponent::update_by_entity_id(&entity_id, npc);
+    ctx.db.npc().entity_id().update(npc);
 
-    TransformComponent::update_by_entity_id(&entity_id, TransformComponent { entity_id, pos, rot });
+    let mut transform = ctx
+        .db
+        .transform()
+        .entity_id()
+        .find(&entity_id)
+        .expect("This transform doesn't exist.");
+    transform.pos = pos;
+    transform.rot = rot;
+    ctx.db.transform().entity_id().update(transform);
 }
 
-#[spacetimedb(reducer)]
+#[reducer]
 pub fn update_npc_animation(
-    _identity: Identity,
-    _timestamp: u64,
+    ctx: &ReducerContext,
+    timestamp: u64,
     entity_id: u64,
     moving: bool,
     action_target_entity_id: u64,
 ) {
-    let _npc = NpcComponent::filter_by_entity_id(&entity_id).expect("This npc doesn't exist.");
+    let _npc = ctx
+        .db
+        .npc()
+        .entity_id()
+        .find(&entity_id)
+        .expect("This npc doesn't exist.");
 
     /*
     TODO: Uncomment when supported.
     // Make sure this identity owns this player
     if identity != 0 {
-        println!("Only the server should animate NPCs (allowed for now)");
+        log::info!("Only the server should animate NPCs (allowed for now)");
     }
     */
 
-    AnimationComponent::update_by_entity_id(
-        &entity_id,
-        AnimationComponent {
-            entity_id,
-            moving,
-            action_target_entity_id,
-        },
-    );
+    ctx.db.animation().entity_id().update(AnimationComponent {
+        entity_id,
+        moving,
+        action_target_entity_id,
+    });
 }

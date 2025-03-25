@@ -1,8 +1,9 @@
-use spacetimedb::spacetimedb;
+use spacetimedb::table;
 
-#[spacetimedb(table)]
+#[table(name = resource, public)]
 pub struct ResourceComponent {
-    #[unique]
+    #[primary_key]
+    #[auto_inc]
     pub entity_id: u64,
     pub health: u8,
     pub resource_id: u8,

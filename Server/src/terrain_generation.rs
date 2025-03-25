@@ -1,16 +1,17 @@
+use crate::components::chunk_component::chunk;
 use crate::components::chunk_component::world_pos_to_chunk_pos;
-use crate::components::chunk_component::Chunk;
 use crate::components::chunk_component::{generate_chunk, ChunkPosition};
-use crate::{Config, PlayerComponent, TransformComponent};
-use spacetimedb::spacetimedb;
-use spacetimedb::ReducerContext;
-use spacetimedb::Timestamp;
+use crate::components::player;
+use crate::components::transform;
+use crate::tables::config;
+use crate::tables::CheckChunkForAllPlayersTimer;
+use spacetimedb::{reducer, ReducerContext, Table};
 use std::collections::BTreeSet;
 
-#[spacetimedb(reducer, repeat = 1000ms)]
-pub(crate) fn check_chunks_for_all_players(_ctx: ReducerContext, _prev_time: Timestamp) {
+#[reducer]
+pub(crate) fn check_chunks_for_all_players(ctx: &ReducerContext, _timer: CheckChunkForAllPlayersTimer) {
     let max_chunks_per_call = 20;
-    let config = Config::filter_by_version(&0);
+    let config = ctx.db.config().version().find(&0);
     if config.is_none() {
         return;
     }
@@ -18,8 +19,8 @@ pub(crate) fn check_chunks_for_all_players(_ctx: ReducerContext, _prev_time: Tim
     let mut chunk_positions = BTreeSet::<ChunkPosition>::new();
     let spawn_radius = 8;
 
-    for player in PlayerComponent::iter() {
-        let transform = TransformComponent::filter_by_entity_id(&player.entity_id).unwrap();
+    for player in ctx.db.player().iter() {
+        let transform = ctx.db.transform().entity_id().find(&player.entity_id).unwrap();
         let player_chunk_position =
             world_pos_to_chunk_pos(transform.pos.x as f64, transform.pos.z as f64, config.chunk_size);
 
@@ -37,7 +38,7 @@ pub(crate) fn check_chunks_for_all_players(_ctx: ReducerContext, _prev_time: Tim
         }
     }
 
-    for chunk in Chunk::iter() {
+    for chunk in ctx.db.chunk().iter() {
         chunk_positions.remove(&chunk.position);
     }
 
@@ -45,6 +46,6 @@ pub(crate) fn check_chunks_for_all_players(_ctx: ReducerContext, _prev_time: Tim
         if idx >= max_chunks_per_call {
             return;
         }
-        generate_chunk(chunk_pos);
+        generate_chunk(&ctx, chunk_pos);
     }
 }

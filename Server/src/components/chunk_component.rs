@@ -1,7 +1,7 @@
-use crate::components::ResourceComponent;
+use crate::components::{resource, ResourceComponent};
 use crate::math::remap;
 use crate::math::{clamp, map_to_u8};
-use crate::{helpers, random, Config};
+use crate::tables::config;
 use conv::{ConvUtil, RoundToNegInf};
 use fast_poisson::Poisson2D;
 use noise::NoiseFn;
@@ -10,7 +10,7 @@ use noise::Seedable;
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use spacetimedb::{spacetimedb, SpacetimeType};
+use spacetimedb::{log, table, ReducerContext, SpacetimeType, Table};
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, SpacetimeType)]
 pub struct ChunkPosition {
@@ -45,9 +45,9 @@ pub struct Deposit {
     pub scale: f32,
 }
 
-#[spacetimedb(table)]
+#[table(name = chunk_data, public)]
 pub struct ChunkData {
-    #[unique]
+    #[primary_key]
     pub chunk_id: u64,
     pub data: Vec<u8>,
     pub grass: Vec<Grass>,
@@ -55,17 +55,16 @@ pub struct ChunkData {
     pub deposits: Vec<Deposit>,
 }
 
-#[spacetimedb(table)]
+#[table(name = chunk, public)]
 pub struct Chunk {
     #[unique]
     pub chunk_id: u64,
     pub position: ChunkPosition,
 }
 
-pub(crate) fn generate_chunk(chunk_pos: ChunkPosition) {
-    spacetimedb::println!("Generating chunk: {:?}", chunk_pos);
-    let config = Config::filter_by_version(&0).unwrap();
-    random::register();
+pub(crate) fn generate_chunk(ctx: &ReducerContext, chunk_pos: ChunkPosition) {
+    log::info!("Generating chunk: {:?}", chunk_pos);
+    let config = ctx.db.config().version().find(&0).unwrap();
 
     let mut rng = ChaCha8Rng::seed_from_u64(config.terrain_seed as u64 + chunk_pos.x as u64 + chunk_pos.y as u64);
 
@@ -167,24 +166,23 @@ pub(crate) fn generate_chunk(chunk_pos: ChunkPosition) {
             1.0,
         );
         if forest_value - dirt_value > rng.gen_range(0.0..1.0) {
-            let resource_entity_id = helpers::next_entity_id();
-
-            trees.push(Tree {
-                entity_id: resource_entity_id,
-                chunk: chunk_pos,
-                tree_idx,
-                x: point[0] as f32,
-                y: point[1] as f32,
-                scale: remap(forest_value as f32, 0.0, 1.0, tree_model_scale[0], tree_model_scale[1]),
-            });
-            // insert tree
-            ResourceComponent::insert(ResourceComponent {
-                entity_id: resource_entity_id,
+            let resource_entity = ctx.db.resource().insert(ResourceComponent {
+                entity_id: 0,
                 health: 10, // a config file would be nice
                 max_health: 10,
                 item_yield_id: 4, // that's some wood log
                 item_yield_quantity: 1,
                 resource_id: 1, // tree
+            });
+
+            // insert tree
+            trees.push(Tree {
+                entity_id: resource_entity.entity_id,
+                chunk: chunk_pos,
+                tree_idx,
+                x: point[0] as f32,
+                y: point[1] as f32,
+                scale: remap(forest_value as f32, 0.0, 1.0, tree_model_scale[0], tree_model_scale[1]),
             });
 
             tree_idx += 1;
@@ -223,10 +221,18 @@ pub(crate) fn generate_chunk(chunk_pos: ChunkPosition) {
 
         let dirt_value = get_dirt_value(splat_world_x, splat_world_y, dirt_perlin);
         if dirt_value >= 0.95 {
-            let resource_entity_id = helpers::next_entity_id();
+            // insert deposit
+            let resource_entity = ctx.db.resource().insert(ResourceComponent {
+                entity_id: 0,
+                health: 5, // a config file would be nice
+                max_health: 5,
+                item_yield_id: 3, // that's some iron ore
+                item_yield_quantity: 1,
+                resource_id: 0, // ore deposit
+            });
 
             deposits.push(Deposit {
-                entity_id: resource_entity_id,
+                entity_id: resource_entity.entity_id,
                 chunk: chunk_pos,
                 deposit_idx,
                 x: point[0] as f32,
@@ -234,20 +240,11 @@ pub(crate) fn generate_chunk(chunk_pos: ChunkPosition) {
                 scale: rng.gen_range(deposit_model_scale[0]..deposit_model_scale[1]),
             });
 
-            // insert deposit
-            ResourceComponent::insert(ResourceComponent {
-                entity_id: resource_entity_id,
-                health: 5, // a config file would be nice
-                max_health: 5,
-                item_yield_id: 3, // that's some iron ore
-                item_yield_quantity: 1,
-                resource_id: 0, // ore deposit
-            });
             deposit_idx += 1;
         }
     }
 
-    ChunkData::insert(ChunkData {
+    ctx.db.chunk_data().insert(ChunkData {
         chunk_id: hash_chunk(chunk_pos),
         data: encode_chunk_data(vec![heightmap, dirt_splat]),
         grass,
@@ -255,16 +252,16 @@ pub(crate) fn generate_chunk(chunk_pos: ChunkPosition) {
         deposits,
     });
 
-    Chunk::insert(Chunk {
+    ctx.db.chunk().insert(Chunk {
         chunk_id: hash_chunk(chunk_pos),
         position: chunk_pos,
     });
 }
 
-pub(crate) fn generate_terrain_stub() {
+pub(crate) fn generate_terrain_stub(ctx: &ReducerContext) {
     let chunk_pos = ChunkPosition { x: 12345, y: 12345 };
 
-    ChunkData::insert(ChunkData {
+    ctx.db.chunk_data().insert(ChunkData {
         chunk_id: hash_chunk(chunk_pos),
         data: vec![],
         grass: vec![],
@@ -272,7 +269,7 @@ pub(crate) fn generate_terrain_stub() {
         deposits: vec![],
     });
 
-    Chunk::insert(Chunk {
+    ctx.db.chunk().insert(Chunk {
         chunk_id: hash_chunk(chunk_pos),
         position: chunk_pos,
     });

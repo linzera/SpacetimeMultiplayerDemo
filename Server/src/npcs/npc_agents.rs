@@ -1,57 +1,59 @@
 use super::move_npc;
 use super::update_npc_animation;
-use crate::components::AnimationComponent;
-use crate::components::NpcComponent;
-use crate::components::PlayerLoginComponent;
-use crate::components::TransformComponent;
-use crate::helpers;
+use crate::components::animation;
+use crate::components::npc;
+use crate::components::player_login;
+use crate::components::transform;
+use crate::components::{AnimationComponent, NpcComponent, TransformComponent};
 use crate::math::StdbQuaternion;
 use crate::math::StdbVector3;
-use crate::{random, Config};
+use crate::random;
+use crate::tables::config;
+use crate::tables::DespawnNpcsTimer;
+use crate::tables::MoveNpcsTimer;
+use crate::tables::SpawnNpcsTimer;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use spacetimedb::println;
-use spacetimedb::Identity;
-use spacetimedb::Timestamp;
-use spacetimedb::{spacetimedb, ReducerContext};
+
+use spacetimedb::Table;
+use spacetimedb::{log, reducer, ReducerContext, Timestamp};
+
 use std::f32::consts::PI;
 use std::ops::Add;
 
-#[spacetimedb(reducer, repeat = 5000ms)]
-pub(crate) fn spawn_npcs(ctx: ReducerContext, _prev_time: Timestamp) {
-    println!("spawn_npcs");
+#[reducer]
+pub(crate) fn spawn_npcs(ctx: &ReducerContext, _timer: SpawnNpcsTimer) -> Result<(), String> {
+    log::info!("spawn_npcs");
 
-    let config = Config::filter_by_version(&0);
+    let config = ctx.db.config().version().find(&0);
     if config.is_none() {
-        return;
+        return Err("Config not found".to_string());
     }
     let config = config.unwrap();
-    let timestamp = ctx
-        .timestamp
-        .duration_since(Timestamp::UNIX_EPOCH)
-        .ok()
-        .unwrap()
-        .as_millis() as u64;
+    let timestamp = ctx.timestamp.duration_since(Timestamp::UNIX_EPOCH).unwrap().as_millis() as u64;
     random::register();
     let mut rng = ChaCha8Rng::seed_from_u64(timestamp);
 
     let min_sq_radius = config.min_spawn_range.powi(2);
 
     // pick a random logged-in player around which the npc will be spawned
-    let logged_in_players: Vec<u64> = PlayerLoginComponent::iter()
+    let logged_in_players: Vec<u64> = ctx
+        .db
+        .player_login()
+        .iter()
         .filter(|p| p.logged_in)
         .map(|p| p.entity_id)
         .collect();
     let count = logged_in_players.len();
     if count == 0 {
         // nobody is logged in, no need for npcs
-        return;
+        return Ok(());
     }
     let index = rng.gen_range(0..logged_in_players.len()) as usize;
     let player_entity_id = logged_in_players[index];
 
-    let mut spawn_pos = TransformComponent::filter_by_entity_id(&player_entity_id).unwrap().pos;
+    let mut spawn_pos = ctx.db.transform().entity_id().find(&player_entity_id).unwrap().pos;
 
     let range = rng.gen_range(config.min_spawn_range..config.max_spawn_range);
     let rad = rng.gen_range(-PI..PI);
@@ -60,59 +62,54 @@ pub(crate) fn spawn_npcs(ctx: ReducerContext, _prev_time: Timestamp) {
     spawn_pos.z += range * rad.sin();
 
     // Make sure the position is not within (min_radius) distance of another player
-    for player in PlayerLoginComponent::iter() {
+    for player in ctx.db.player_login().iter() {
         if player.logged_in {
-            let transform = TransformComponent::filter_by_entity_id(&player.entity_id).unwrap();
+            let transform = ctx.db.transform().entity_id().find(&player.entity_id).unwrap();
             let dist = transform.pos.sq_distance(&spawn_pos);
             if dist < min_sq_radius {
-                return;
+                return Ok(());
             }
         }
     }
 
     // Make sure the position is not within (min_radius) distance of another npc
-    for npc in NpcComponent::iter() {
-        let transform = TransformComponent::filter_by_entity_id(&npc.entity_id).unwrap();
+    for npc in ctx.db.npc().iter() {
+        let transform = ctx.db.transform().entity_id().find(&npc.entity_id).unwrap();
         let dist = transform.pos.sq_distance(&spawn_pos);
         if dist < min_sq_radius {
-            return;
+            return Ok(());
         }
     }
 
     // Spawn the npc.
     let rot = StdbQuaternion::new(0.0, rng.gen_range(-PI..PI), 0.0);
 
-    let entity_id = helpers::next_entity_id();
-
-    // Make sure this npc doesn't already exist
-    if NpcComponent::filter_by_entity_id(&entity_id).is_some() {
-        panic!("A npc with this entity_id already exists: {}", entity_id);
-    }
-
-    NpcComponent::insert(NpcComponent {
-        entity_id,
+    let npc_entity = ctx.db.npc().insert(NpcComponent {
+        entity_id: 0,
         model: "Rabbit".to_string(),
         next_action: timestamp,
     });
-    TransformComponent::insert(TransformComponent {
-        entity_id,
+    ctx.db.transform().insert(TransformComponent {
+        entity_id: npc_entity.entity_id,
         pos: spawn_pos,
         rot,
     });
-    AnimationComponent::insert(AnimationComponent {
-        entity_id,
+    ctx.db.animation().insert(AnimationComponent {
+        entity_id: npc_entity.entity_id,
         moving: false,
         action_target_entity_id: 0,
     });
+
+    Ok(())
 }
 
-#[spacetimedb(reducer, repeat = 15000ms)]
-pub(crate) fn despawn_npcs(_ctx: ReducerContext, _prev_time: Timestamp) {
-    println!("despawn_npcs");
+#[reducer]
+pub(crate) fn despawn_npcs(ctx: &ReducerContext, _timer: DespawnNpcsTimer) -> Result<(), String> {
+    log::info!("despawn_npcs");
 
-    let config = Config::filter_by_version(&0);
+    let config = ctx.db.config().version().find(&0);
     if config.is_none() {
-        return;
+        return Err("Config not found".to_string());
     }
     let config = config.unwrap();
 
@@ -120,12 +117,12 @@ pub(crate) fn despawn_npcs(_ctx: ReducerContext, _prev_time: Timestamp) {
 
     let mut despawn_array = Vec::new();
     // Make sure the position is within (min_radius) distance of a player
-    for npc in NpcComponent::iter() {
+    for npc in ctx.db.npc().iter() {
         let mut within_range = false;
-        let npc_transform = TransformComponent::filter_by_entity_id(&npc.entity_id).unwrap();
-        for player in PlayerLoginComponent::iter() {
+        let npc_transform = ctx.db.transform().entity_id().find(&npc.entity_id).unwrap();
+        for player in ctx.db.player_login().iter() {
             // Keep logged out players for this check so the NPC will still be there when you relog.
-            let player_transform = TransformComponent::filter_by_entity_id(&player.entity_id).unwrap();
+            let player_transform = ctx.db.transform().entity_id().find(&player.entity_id).unwrap();
             within_range |= npc_transform.pos.sq_distance(&player_transform.pos) <= min_sq_radius;
         }
         if !within_range {
@@ -134,49 +131,46 @@ pub(crate) fn despawn_npcs(_ctx: ReducerContext, _prev_time: Timestamp) {
     }
 
     for entity_id in despawn_array {
-        NpcComponent::delete_by_entity_id(&entity_id);
-        TransformComponent::delete_by_entity_id(&entity_id);
-        AnimationComponent::delete_by_entity_id(&entity_id);
+        ctx.db.npc().entity_id().delete(&entity_id);
+        ctx.db.transform().entity_id().delete(&entity_id);
+        ctx.db.animation().entity_id().delete(&entity_id);
     }
+
+    Ok(())
 }
 
-#[spacetimedb(reducer, repeat = 100ms)]
-pub(crate) fn move_npcs(ctx: ReducerContext, _prev_time: Timestamp) {
-    println!("move_npcs");
+#[reducer]
+pub(crate) fn move_npcs(ctx: &ReducerContext, _timer: MoveNpcsTimer) -> Result<(), String> {
+    log::info!("move_npcs");
 
-    let config = Config::filter_by_version(&0);
+    let config = ctx.db.config().version().find(&0);
     if config.is_none() {
-        return;
+        return Err("Config not found".to_string());
     }
     let config = config.unwrap();
     let detection_range = config.npc_detection_range;
 
-    let timestamp = ctx
-        .timestamp
-        .duration_since(Timestamp::UNIX_EPOCH)
-        .ok()
-        .unwrap()
-        .as_millis() as u64;
+    let timestamp = ctx.timestamp.duration_since(Timestamp::UNIX_EPOCH).unwrap().as_millis() as u64;
 
     random::register();
     let mut rng = ChaCha8Rng::seed_from_u64(timestamp);
 
-    let npc_entity_ids: Vec<u64> = NpcComponent::iter().map(|npc| npc.entity_id).collect();
+    let npc_entity_ids: Vec<u64> = ctx.db.npc().iter().map(|npc| npc.entity_id).collect();
 
     for npc_entity_id in npc_entity_ids {
-        let npc = NpcComponent::filter_by_entity_id(&npc_entity_id).unwrap();
+        let npc = ctx.db.npc().entity_id().find(&npc_entity_id).unwrap();
         if npc.next_action > timestamp {
             continue;
         }
 
-        let npc_transform = TransformComponent::filter_by_entity_id(&npc_entity_id).unwrap();
+        let npc_transform = ctx.db.transform().entity_id().find(&npc_entity_id).unwrap();
         let mut vector = StdbVector3 { x: 0.0, y: 0.0, z: 0.0 };
 
         // Calculate threat level under the form of a vector
-        for player in PlayerLoginComponent::iter() {
+        for player in ctx.db.player_login().iter() {
             if player.logged_in {
                 // Keep logged out players for this check so the NPC will still be there when you relog.
-                let player_transform = TransformComponent::filter_by_entity_id(&player.entity_id).unwrap();
+                let player_transform = ctx.db.transform().entity_id().find(&player.entity_id).unwrap();
                 let delta = npc_transform.pos - player_transform.pos;
                 let len = (detection_range - delta.length()).max(0.0);
                 if len > 0.0 {
@@ -188,14 +182,14 @@ pub(crate) fn move_npcs(ctx: ReducerContext, _prev_time: Timestamp) {
         if rng.gen_range(0.0..detection_range) <= vector.length() {
             // React on threat
             move_npc(
-                Identity::from_hashing_bytes([0]), // todo : server hash
+                ctx,
                 timestamp,
                 npc_entity_id,
                 npc_transform.pos + vector.normalized() * 2.0,
                 StdbQuaternion::look_rotation(vector, StdbVector3::up()),
                 300,
             );
-            update_npc_animation(Identity::from_hashing_bytes([0]), timestamp, npc_entity_id, true, 0);
+            update_npc_animation(ctx, timestamp, npc_entity_id, true, 0);
         } else {
             // React randomly
             let rnd = rng.gen_range(0..40);
@@ -207,23 +201,25 @@ pub(crate) fn move_npcs(ctx: ReducerContext, _prev_time: Timestamp) {
                     z: rng.gen_range(-1.0..1.0),
                 };
                 move_npc(
-                    Identity::from_hashing_bytes([0]), // todo : server hash
+                    ctx,
                     timestamp,
                     npc_entity_id,
                     npc_transform.pos + vector.normalized() * distance,
                     StdbQuaternion::look_rotation(vector, StdbVector3::up()),
                     (150.0 * distance) as u64,
                 );
-                update_npc_animation(Identity::from_hashing_bytes([0]), timestamp, npc_entity_id, true, 0);
+                update_npc_animation(ctx, timestamp, npc_entity_id, true, 0);
             } else {
-                let npc_animation = AnimationComponent::filter_by_entity_id(&npc_entity_id).unwrap();
+                let npc_animation = ctx.db.animation().entity_id().find(&npc_entity_id).unwrap();
                 if npc_animation.moving {
-                    update_npc_animation(Identity::from_hashing_bytes([0]), timestamp, npc_entity_id, false, 0);
+                    update_npc_animation(ctx, timestamp, npc_entity_id, false, 0);
                 }
-                let mut npc = NpcComponent::filter_by_entity_id(&npc_entity_id).unwrap();
+                let mut npc = ctx.db.npc().entity_id().find(&npc_entity_id).unwrap();
                 npc.next_action = timestamp + rng.gen_range(100..300);
-                NpcComponent::update_by_entity_id(&npc_entity_id, npc);
+                ctx.db.npc().entity_id().update(npc);
             }
         }
     }
+
+    Ok(())
 }

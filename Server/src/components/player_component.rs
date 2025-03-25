@@ -1,9 +1,9 @@
-use spacetimedb::spacetimedb;
-use spacetimedb::Identity;
+use spacetimedb::{table, Identity};
 
-#[spacetimedb(table)]
+#[table(name = player, public)]
 pub struct PlayerComponent {
-    #[unique]
+    #[primary_key]
+    #[auto_inc]
     pub entity_id: u64,
     #[unique]
     pub owner_id: Identity,

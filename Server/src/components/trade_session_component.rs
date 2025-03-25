@@ -1,9 +1,9 @@
-use spacetimedb::spacetimedb;
+use spacetimedb::table;
 
-#[spacetimedb(table)]
+#[table(name = trade, public)]
 #[derive(Clone)]
 pub struct TradeSessionComponent {
-    #[unique]
+    #[primary_key]
     pub entity_id: u64,
     pub initiator_entity_id: u64,
     pub acceptor_entity_id: u64,
@@ -13,9 +13,9 @@ pub struct TradeSessionComponent {
     pub approved_by_acceptor: bool,
 }
 
-#[spacetimedb(table)]
+#[table(name = active_trade, public)]
 pub struct ActiveTradeComponent {
-    #[unique]
+    #[primary_key]
     pub entity_id: u64,
     pub trade_session_entity_id: u64,
 }

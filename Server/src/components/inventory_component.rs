@@ -1,11 +1,12 @@
-use crate::tables::Config;
+use crate::tables::config;
 use crate::tuples::Pocket;
-use spacetimedb::spacetimedb;
+use spacetimedb::{table, ReducerContext};
 
-#[spacetimedb(table)]
+#[table(name = inventory, public)]
 #[derive(Debug, Clone)]
 pub struct InventoryComponent {
-    #[unique]
+    #[primary_key]
+    #[auto_inc]
     pub entity_id: u64,
     pub pockets: Vec<Pocket>,
 }
@@ -44,9 +45,9 @@ impl InventoryComponent {
         }
     }
 
-    pub fn add(&mut self, item_id: u32, item_count: i32, index: Option<u32>) -> bool {
+    pub fn add(&mut self, ctx: &ReducerContext, item_id: u32, item_count: i32, index: Option<u32>) -> bool {
         // Check to see if this pocket index is bad
-        let config = Config::filter_by_version(&0).unwrap();
+        let config = ctx.db.config().version().find(&0).expect("Config exists.");
 
         // Change empty pocket index for the first EMPTY pocket index
         let pocket_idx = if let Some(idx) = index {
@@ -94,22 +95,22 @@ impl InventoryComponent {
         true
     }
 
-    pub fn can_hold(&self, items: &Vec<(u32, i32)>) -> bool {
+    pub fn can_hold(&self, ctx: &ReducerContext, items: &Vec<(u32, i32)>) -> bool {
         let mut copy = self.clone();
         let mut success = true;
         for &(item_id, item_count) in items {
-            success &= copy.add(item_id, item_count, None);
+            success &= copy.add(ctx, item_id, item_count, None);
         }
         success
     }
 
-    pub fn combine(&mut self, other: &InventoryComponent) -> bool {
+    pub fn combine(&mut self, ctx: &ReducerContext, other: &InventoryComponent) -> bool {
         let other_items: Vec<(u32, i32)> = other.pockets.iter().map(|p| (p.item_id, p.item_count)).collect();
-        if !self.can_hold(&other_items) {
+        if !self.can_hold(ctx, &other_items) {
             return false;
         }
         for (item_id, item_count) in other_items {
-            self.add(item_id, item_count, None);
+            self.add(ctx, item_id, item_count, None);
         }
         true
     }

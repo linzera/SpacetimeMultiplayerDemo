@@ -16,15 +16,15 @@ public partial class BitCraftMiniGameManager : Singleton<BitCraftMiniGameManager
     }
 
     [SerializeField] private string moduleAddress = "bitcraftmini";
-    [SerializeField] private string hostName = "spacetimedb.com/spacetimedb";
-    [SerializeField] private bool sslEnabled = true;    
+    [SerializeField] private string hostName = "localhost:3000";
+    [SerializeField] private bool sslEnabled = false;
 
     [SerializeField] private NetworkPlayer playerPrefab;
     [SerializeField] private GameObject preSpawnCamera;
     [SerializeField, Tooltip("The rate at which we are sending frequent updates on the client (in messages per second)")]
     private float clientSendRate;
     [SerializeField] private float spawnAreaRadius;
-    [SerializeField] private NpcData[] npcPrefabs;    
+    [SerializeField] private NpcData[] npcPrefabs;
 
     readonly Dictionary<ulong, NetworkPlayer> players = new Dictionary<ulong, NetworkPlayer>();
     readonly Dictionary<ulong, Npc> npcs = new Dictionary<ulong, Npc>();
@@ -36,7 +36,7 @@ public partial class BitCraftMiniGameManager : Singleton<BitCraftMiniGameManager
     public static Action<ulong> OnResourceUpdated;
 
     public static GameObject FeatureRoot;
-    
+
     protected void Start()
     {
         FeatureRoot = new GameObject("Features");
@@ -49,18 +49,18 @@ public partial class BitCraftMiniGameManager : Singleton<BitCraftMiniGameManager
 
             NetworkManager.instance.Subscribe(new List<string>()
             {
-                "SELECT * FROM Config", 
-                "SELECT * FROM PlayerLoginComponent", 
-                "SELECT * FROM TransformComponent", 
-                "SELECT * FROM AnimationComponent", 
+                "SELECT * FROM Config",
+                "SELECT * FROM PlayerLoginComponent",
+                "SELECT * FROM TransformComponent",
+                "SELECT * FROM AnimationComponent",
                 "SELECT * FROM ActiveTradeComponent",
-                "SELECT * FROM TradeSessionComponent", 
-                "SELECT * FROM ChunkData", 
-                "SELECT * FROM NpcComponent", 
+                "SELECT * FROM TradeSessionComponent",
+                "SELECT * FROM ChunkData",
+                "SELECT * FROM NpcComponent",
                 "SELECT * FROM Chunk",
-                "SELECT * FROM ResourceComponent", 
-                "SELECT * FROM ServerGlobals", 
-                "SELECT * FROM InventoryComponent", 
+                "SELECT * FROM ResourceComponent",
+                "SELECT * FROM ServerGlobals",
+                "SELECT * FROM InventoryComponent",
                 "SELECT * FROM PlayerComponent",
                 "SELECT * FROM PlayerChatMessage"
             });
@@ -74,7 +74,8 @@ public partial class BitCraftMiniGameManager : Singleton<BitCraftMiniGameManager
             Debug.Log("Disconnected.");
         };
 
-        NetworkManager.instance.onIdentityReceived += (identity) => {
+        NetworkManager.instance.onIdentityReceived += (identity) =>
+        {
             NetworkPlayer.identity = identity;
         };
 
@@ -86,7 +87,8 @@ public partial class BitCraftMiniGameManager : Singleton<BitCraftMiniGameManager
         NetworkManager.instance.Connect(hostName, moduleAddress, sslEnabled);
     }
 
-    void Update() {
+    void Update()
+    {
         if (!lastMessageSendTick.HasValue)
         {
             lastMessageSendTick = Time.time;
@@ -126,7 +128,7 @@ public partial class BitCraftMiniGameManager : Singleton<BitCraftMiniGameManager
     {
         preSpawnCamera.SetActive(false);
     }
-    
+
     public ResourceComponent GetResourceComponent(ulong entityId)
     {
         if (resources.TryGetValue(entityId, out var res))
